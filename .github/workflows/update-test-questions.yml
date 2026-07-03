@@ -1,0 +1,41 @@
+name: Update Test Questions
+
+on:
+  workflow_dispatch:
+    inputs:
+      week_start_date:
+        description: '週開始日 (例: 2026-06-29)'
+        required: true
+        type: string
+      test1_json:
+        description: |
+          test1_questions JSON配列。形式:
+          [{"sentence":"穴埋め文","answer":"答え","hint":"ヒント"},...]        required: true
+        type: string
+      test2_json:
+        description: |
+          test2_questions JSON配列。形式:
+          [{"sentence":"穴埋め文","answer":"答え","hint":"ヒント"},...]        required: true
+        type: string
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm install @supabase/supabase-js
+
+      - name: Run update-test-questions
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          WEEK_START_DATE: ${{ inputs.week_start_date }}
+          TEST1_JSON: ${{ inputs.test1_json }}
+          TEST2_JSON: ${{ inputs.test2_json }}
+        run: node scripts/update-test-questions.mjs
