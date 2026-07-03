@@ -8,14 +8,12 @@ on:
         required: true
         type: string
       test1_json:
-        description: |
-          test1_questions JSON配列。形式:
-          [{"sentence":"穴埋め文","answer":"答え","hint":"ヒント"},...]        required: true
+        description: 'test1_questions JSON配列 例: [{"sentence":"___","answer":"bag","hint":"袋"}]'
+        required: true
         type: string
       test2_json:
-        description: |
-          test2_questions JSON配列。形式:
-          [{"sentence":"穴埋め文","answer":"答え","hint":"ヒント"},...]        required: true
+        description: 'test2_questions JSON配列 例: [{"sentence":"___","answer":"put it in","hint":"袋に入れる"}]'
+        required: true
         type: string
 
 jobs:
