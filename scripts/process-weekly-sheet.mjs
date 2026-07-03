@@ -33,45 +33,37 @@ if (!WEEK_START_DATE)   { console.error('❌ WEEK_START_DATE 未設定'); proces
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 // ── SHEET_TEXT パーサー ────────────────────────────────────────
-function parseSheetText(text) {
-  // 1行で渡された場合も対応:
-  //  1) 全角コロン「：」→ 半角「:」、全角スペース → 半角（日本IME対策）
-  //  2) キーワード前後の空白を柔軟にマッチ、大文字小文字も無視
-  const normalized = text
-    .replace(/：/g, ':')
-    .replace(/　/g, ' ')
-    .replace(/\s*##\s+/g, '\n## ')
-    .replace(/\s*Pattern\s*:\s*/gi, '\nPattern: ')
-    .replace(/\s*EN\s*:\s*/gi, '\nEN: ')
-    .replace(/\s*JP\s*:\s*/gi, '\nJP: ')
-    .trim();
+function parseSheetText(raw) {
+  // 全角コロン「：」→ 半角「:」、全角スペース → 半角（日本語IME対策）
+  let t = raw.replace(/：/g, ':').replace(/　/g, ' ');
 
+  // キーワードの前に改行を挿入（1行で渡された場合も対応）
+  t = t
+    .replace(/([^\n])(##\s)/g, '$1\n$2')
+    .replace(/([^\n])(Pattern:)/g, '$1\nPattern:')
+    .replace(/([^\n])(EN:)/g, '$1\nEN:')
+    .replace(/([^\n])(JP:)/g, '$1\nJP:');
+
+  const lines = t.split('\n').map(l => l.trim()).filter(Boolean);
   const situations = [];
-  const lines = normalized.split(/\r?\n/);
   let current = null;
+  let lastEN = null;
 
-  for (const rawLine of lines) {
-    const line = rawLine.trim();
-
-    if (line.startsWith('## ')) {
-      if (current && current.sentences.length > 0) situations.push(current);
-      current = { title: line.slice(3).trim(), pattern: '', sentences: [] };
-    } else if (current) {
-      if (line.startsWith('Pattern:')) {
-        current.pattern = line.slice('Pattern:'.length).trim();
-      } else if (line.startsWith('EN:')) {
-        const enText = line.slice(3).trim();
-        if (enText) current.sentences.push({ text: enText, translation: '' });
-      } else if (line.startsWith('JP:')) {
-        const jp = line.slice(3).trim();
-        if (current.sentences.length > 0) {
-          current.sentences[current.sentences.length - 1].translation = jp;
-        }
-      }
+  for (const line of lines) {
+    if (line.startsWith('##')) {
+      if (current) situations.push(current);
+      current = { title: line.replace(/^##\s*/, '').trim(), pattern: '', sentences: [] };
+      lastEN = null;
+    } else if (line.startsWith('Pattern:') && current) {
+      current.pattern = line.replace(/^Pattern:\s*/, '').trim();
+    } else if (line.startsWith('EN:') && current) {
+      lastEN = line.replace(/^EN:\s*/, '').trim();
+    } else if (line.startsWith('JP:') && current && lastEN) {
+      current.sentences.push({ text: lastEN, translation: line.replace(/^JP:\s*/, '').trim() });
+      lastEN = null;
     }
   }
-
-  if (current && current.sentences.length > 0) situations.push(current);
+  if (current) situations.push(current);
   return situations;
 }
 
