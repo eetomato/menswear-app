@@ -33,38 +33,37 @@ if (!WEEK_START_DATE)   { console.error('❌ WEEK_START_DATE 未設定'); proces
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 // ── SHEET_TEXT パーサー ────────────────────────────────────────
-function parseSheetText(text) {
+function parseSheetText(raw) {
+  // 全角コロン「：」→ 半角「:」、全角スペース → 半角（日本語IME対策）
+  let t = raw.replace(/：/g, ':').replace(/　/g, ' ');
+
+  // キーワードの前に改行を挿入（1行で渡された場合も対応）
+  t = t
+    .replace(/([^\n])(##\s)/g, '$1\n$2')
+    .replace(/([^\n])(Pattern:)/g, '$1\nPattern:')
+    .replace(/([^\n])(EN:)/g, '$1\nEN:')
+    .replace(/([^\n])(JP:)/g, '$1\nJP:');
+
+  const lines = t.split('\n').map(l => l.trim()).filter(Boolean);
   const situations = [];
-  const blocks = text.split(/(?=^##\s)/m).map(b => b.trim()).filter(Boolean);
+  let current = null;
+  let lastEN = null;
 
-  for (const block of blocks) {
-    const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
-    if (!lines[0]?.startsWith('## ')) continue;
-
-    const title = lines[0].replace(/^##\s+/, '').trim();
-    let pattern = '';
-    const sentences = [];
-
-    for (let i = 1; i < lines.length; i++) {
-      const line = lines[i];
-      if (line.startsWith('Pattern:')) {
-        pattern = line.slice('Pattern:'.length).trim();
-      } else if (line.startsWith('EN:')) {
-        const enText = line.slice(3).trim();
-        let jp = '';
-        if (i + 1 < lines.length && lines[i + 1].startsWith('JP:')) {
-          jp = lines[i + 1].slice(3).trim();
-          i++;
-        }
-        if (enText) sentences.push({ text: enText, translation: jp });
-      }
-    }
-
-    if (title && sentences.length > 0) {
-      situations.push({ title, pattern, sentences });
+  for (const line of lines) {
+    if (line.startsWith('##')) {
+      if (current) situations.push(current);
+      current = { title: line.replace(/^##\s*/, '').trim(), pattern: '', sentences: [] };
+      lastEN = null;
+    } else if (line.startsWith('Pattern:') && current) {
+      current.pattern = line.replace(/^Pattern:\s*/, '').trim();
+    } else if (line.startsWith('EN:') && current) {
+      lastEN = line.replace(/^EN:\s*/, '').trim();
+    } else if (line.startsWith('JP:') && current && lastEN) {
+      current.sentences.push({ text: lastEN, translation: line.replace(/^JP:\s*/, '').trim() });
+      lastEN = null;
     }
   }
-
+  if (current) situations.push(current);
   return situations;
 }
 
@@ -105,18 +104,7 @@ async function callClaude(prompt) {
 async function generateChunks(situations) {
   const sentences = situations.flatMap(s => s.sentences.map(se => se.text));
 
-  const prompt = `以下の英語文を各2〜4個の意味単位チャンクに分割してください。
-
-各文について以下のJSONオブジェクトを生成します:
-- "chunk": 最初のチャンク（文字列）
-- "chunk_meaning": 最初のチャンクの日本語意味（文字列）
-- "chunks": 全チャンク配列
-- "chunk_meanings": 各チャンクとその日本語意味のオブジェクト
-
-英語文リスト:
-${sentences.map((s, i) => `${i + 1}. ${s}`).join('\n')}
-
-JSON配列のみ返してください（説明文・コードブロック不要）:`;
+  const prompt = `以下の英語文を各2〜4個の意味単位チャンクに分割してください。\n\n各文について以下のJSONオブジェクトを生成します:\n- "chunk": 最初のチャンク（文字列）\n- "chunk_meaning": 最初のチャンクの日本語意味（文字列）\n- "chunks": 全チャンク配列\n- "chunk_meanings": 各チャンクとその日本語意味のオブジェクト\n\n英語文リスト:\n${sentences.map((s, i) => `${i + 1}. ${s}`).join('\n')}\n\nJSON配列のみ返してください（説明文・コードブロック不要）:`;
 
   const raw = await callClaude(prompt);
   return extractJson(raw);
@@ -128,21 +116,7 @@ async function generateTestQuestions(situations) {
     s.sentences.map(se => `${se.text}（${se.translation || ''}）`)
   );
 
-  const prompt = `以下の英語文から2種類の穴埋めテスト問題を生成してください。
-
-【Test 1 — キーワード穴埋め】
-各文から名詞・重要単語を1つ選んで___ で隠した問題。${pairs.length}問。
-
-【Test 2 — チャンク穴埋め】
-各文から動詞句・意味チャンクを1つ選んで___で隠した問題。${pairs.length}問。
-
-各問題の形式: {"sentence": "穴埋め文", "answer": "答え", "hint": "日本語ヒント"}
-
-英語文リスト:
-${pairs.map((p, i) => `${i + 1}. ${p}`).join('\n')}
-
-以下のJSON形式のみで返してください（説明文不要）:
-{"test1": [...], "test2": [...]}`;
+  const prompt = `以下の英語文から2種類の穴埋めテスト問題を生成してください。\n\n【Test 1 — キーワード穴埋め】\n各文から名詞・重要単語を1つ選んで___ で隠した問題。${pairs.length}問。\n\n【Test 2 — チャンク穴埋め】\n各文から動詞句・意味チャンクを1つ選んで___で隠した問題。${pairs.length}問。\n\n各問題の形式: {"sentence": "穴埋め文", "answer": "答え", "hint": "日本語ヒント"}\n\n英語文リスト:\n${pairs.map((p, i) => `${i + 1}. ${p}`).join('\n')}\n\n以下のJSON形式のみで返してください（説明文不要）:\n{"test1": [...], "test2": [...]}`;
 
   const raw = await callClaude(prompt);
   return extractJson(raw);
