@@ -1,0 +1,40 @@
+name: Process Weekly Sheet (AI)
+
+on:
+  workflow_dispatch:
+    inputs:
+      week_start_date:
+        description: '週開始日 (例: 2026-06-29)'
+        required: true
+        type: string
+      title:
+        description: 'タイトル (例: 6/29~)'
+        required: true
+        type: string
+      sheet_text:
+        description: '学習シート全文 (## タイトル / Pattern: / EN: / JP: 形式)'
+        required: true
+        type: string
+
+jobs:
+  process:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm install @supabase/supabase-js
+
+      - name: Run process-weekly-sheet
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          WEEK_START_DATE: ${{ inputs.week_start_date }}
+          TITLE: ${{ inputs.title }}
+          SHEET_TEXT: ${{ inputs.sheet_text }}
+        run: node scripts/process-weekly-sheet.mjs
