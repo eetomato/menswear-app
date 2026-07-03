@@ -34,12 +34,13 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 // ── SHEET_TEXT パーサー ────────────────────────────────────────
 function parseSheetText(text) {
-  // GitHub Actions では改行なし1行で渡される場合があるため前処理
+  // 1行で渡された場合も対応: キーワード前後の空白を柔軟にマッチ
   const normalized = text
-    .replace(/ ## /g, '\n## ')
-    .replace(/ Pattern:/g, '\nPattern:')
-    .replace(/ EN:/g, '\nEN:')
-    .replace(/ JP:/g, '\nJP:');
+    .replace(/\s*##\s+/g, '\n## ')
+    .replace(/\s*Pattern:\s*/g, '\nPattern: ')
+    .replace(/\s*EN:\s*/g, '\nEN: ')
+    .replace(/\s*JP:\s*/g, '\nJP: ')
+    .trim();
 
   const situations = [];
   const lines = normalized.split(/\r?\n/);
