@@ -34,12 +34,16 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 // ── SHEET_TEXT パーサー ────────────────────────────────────────
 function parseSheetText(text) {
-  // 1行で渡された場合も対応: キーワード前後の空白を柔軟にマッチ
+  // 1行で渡された場合も対応:
+  //  1) 全角コロン「：」→ 半角「:」、全角スペース → 半角（日本IME対策）
+  //  2) キーワード前後の空白を柔軟にマッチ、大文字小文字も無視
   const normalized = text
+    .replace(/：/g, ':')
+    .replace(/　/g, ' ')
     .replace(/\s*##\s+/g, '\n## ')
-    .replace(/\s*Pattern:\s*/g, '\nPattern: ')
-    .replace(/\s*EN:\s*/g, '\nEN: ')
-    .replace(/\s*JP:\s*/g, '\nJP: ')
+    .replace(/\s*Pattern\s*:\s*/gi, '\nPattern: ')
+    .replace(/\s*EN\s*:\s*/gi, '\nEN: ')
+    .replace(/\s*JP\s*:\s*/gi, '\nJP: ')
     .trim();
 
   const situations = [];
