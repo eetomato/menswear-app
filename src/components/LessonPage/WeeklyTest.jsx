@@ -160,11 +160,11 @@ function FinalResult({ test1Results, test2Results, weekDate, user, startedAt, sa
   const t1c = test1Results.filter((r) => r.isCorrect).length;
   const t2c = (test2Results || []).filter((r) => r.isCorrect).length;
 
-  const [saveStatus, setSaveStatus] = useState(null); // null | 'saving' | 'ok:...' | '저장エラー:...'
-
   const handleComplete = async () => {
+    // 경과 시간 계산 (분 단위, 최소 1분)
     const elapsedMinutes = Math.max(1, Math.round((Date.now() - startedAt) / 60000));
 
+    // localStorage 저장
     const stored = JSON.parse(localStorage.getItem('nh_test_results') || '[]');
     stored.push({
       week: weekDate,
@@ -178,72 +178,53 @@ function FinalResult({ test1Results, test2Results, weekDate, user, startedAt, sa
     });
     localStorage.setItem('nh_test_results', JSON.stringify(stored));
 
-    setSaveStatus('saving');
+    // Supabase results + sessions 저장
+    // ネットワーク/RLS 障害で await が永遠に返らないと onComplete まで到達せず
+    // 「保存中」で無限ローディングになるため、タイムアウトガードで必ず抜ける
+    if (supabase && user) {
+      const withTimeout = (p, ms) => Promise.race([
+        p,
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms)),
+      ]);
+      try {
+        const { data: emp } = await withTimeout(
+          supabase
+            .from('employees')
+            .select('id')
+            .eq('name', user.name)
+            .maybeSingle(),
+          5000
+        );
 
-    let errorMsg = null;
-    let debugInfo = '';
-    try {
-      if (supabase && user && user.role !== 'manager') {
-        debugInfo = `user="${user.name}"`;
-        console.log('[WeeklyTest] 저장 시작 — user.name:', user.name);
-
-        const { data: emp, error: empErr } = await supabase
-          .from('employees')
-          .select('id, name')
-          .eq('name', user.name)
-          .maybeSingle();
-
-        console.log('[WeeklyTest] employee lookup →', { emp, empErr });
-        debugInfo += ` emp=${emp?.id?.slice(0, 8) ?? 'null'} empErr=${empErr?.message ?? 'none'}`;
-
-        if (empErr) {
-          throw new Error(`employee lookup エラー (name="${user.name}"): ${empErr.message}`);
+        if (emp?.id) {
+          await withTimeout(
+            Promise.all([
+              supabase.from('results').insert({
+                employee_id: emp.id,
+                question_type: 'weekly_test',
+                user_answer: `test1:${t1c}/${test1Results.length}, test2:${t2c}/${(test2Results || []).length}`,
+                expected_answer: weekDate || '',
+                is_correct: pct >= 80,
+                attempted_date: new Date().toISOString().slice(0, 10),
+              }),
+              supabase.from('sessions').insert({
+                employee_id: emp.id,
+                lesson_id: null,
+                study_minutes: elapsedMinutes,
+              }),
+            ]),
+            5000
+          );
         }
-        if (!emp?.id) {
-          throw new Error(`employee 見つからない (name="${user.name}")`);
-        }
-
-        const insertPayload = {
-          employee_id: emp.id,
-          user_answer: `test1:${t1c}/${test1Results.length}, test2:${t2c}/${(test2Results || []).length}`,
-          is_correct: pct >= 80,
-          time_spent_seconds: elapsedMinutes * 60,
-          attempted_date: new Date().toISOString().slice(0, 10),
-        };
-        console.log('[WeeklyTest] results INSERT payload:', insertPayload);
-
-        const [rRes, sRes] = await Promise.all([
-          supabase.from('results').insert(insertPayload),
-          supabase.from('sessions').insert({
-            employee_id: emp.id,
-            lesson_id: null,
-            study_minutes: elapsedMinutes,
-          }),
-        ]);
-
-        console.log('[WeeklyTest] results INSERT →', { data: rRes.data, error: rRes.error });
-        console.log('[WeeklyTest] sessions INSERT →', { data: sRes.data, error: sRes.error });
-        debugInfo += ` rErr=${rRes.error?.message ?? 'ok'} sErr=${sRes.error?.message ?? 'ok'}`;
-
-        if (rRes.error) throw new Error(`results INSERT: ${rRes.error.message}`);
-        if (sRes.error) throw new Error(`sessions INSERT: ${sRes.error.message}`);
-      } else if (user?.role === 'manager') {
-        debugInfo = `manager="${user.name}" (저장 생략)`;
-      } else {
-        debugInfo = `supabase=${!!supabase} user=${!!user}`;
-      }
-    } catch (e) {
-      console.error('[WeeklyTest] Supabase 저장 실패:', e.message, e);
-      errorMsg = e.message;
-    } finally {
-      saveSession?.({ lessonId: `weekly-test-${weekDate}`, studyMinutes: elapsedMinutes });
-      if (errorMsg) {
-        setSaveStatus(`저장エラー: ${errorMsg}`);
-      } else {
-        setSaveStatus(`ok:${debugInfo}`);
-        // Don't auto-navigate — show success box so user can verify before going home
+      } catch (e) {
+        console.warn('[WeeklyTest] Supabase 저장 실패/타임아웃', e.message);
       }
     }
+
+    // localStorage sessions에도 저장
+    saveSession?.({ lessonId: `weekly-test-${weekDate}`, studyMinutes: elapsedMinutes });
+
+    onComplete?.();
   };
 
   return (
@@ -275,68 +256,14 @@ function FinalResult({ test1Results, test2Results, weekDate, user, startedAt, sa
         <p style={{ textAlign: 'center', marginTop: 24, color: 'var(--muted)', fontSize: '0.9rem' }}>
           {pct >= 80 ? '🎉 よくできました！Great work!' : '📚 復習して次回また挑戦！'}
         </p>
-
-        {/* 保存中 / エラー */}
-        {saveStatus && !saveStatus.startsWith('ok') && (
-          <div style={{
-            margin: '16px 0 0',
-            padding: '12px 16px',
-            borderRadius: 10,
-            background: saveStatus === 'saving' ? 'var(--paper)' : '#fff0f0',
-            border: `1px solid ${saveStatus === 'saving' ? 'var(--border)' : '#ffaaaa'}`,
-            fontSize: '0.8rem',
-            wordBreak: 'break-all',
-          }}>
-            {saveStatus === 'saving' ? '⏳ 保存中...' : `❌ ${saveStatus}`}
-            {saveStatus !== 'saving' && (
-              <button
-                type="button"
-                style={{ display: 'block', marginTop: 8, fontSize: '0.8rem', color: 'var(--muted)', textDecoration: 'underline', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
-                onClick={onComplete}
-              >
-                このまま終了する →
-              </button>
-            )}
-          </div>
-        )}
-
-        {/* 保存成功 */}
-        {saveStatus?.startsWith('ok') && (
-          <div style={{
-            margin: '16px 0 0',
-            padding: '12px 16px',
-            borderRadius: 10,
-            background: '#f0fff4',
-            border: '1px solid #9ae6b4',
-            fontSize: '0.8rem',
-            wordBreak: 'break-all',
-          }}>
-            ✅ 保存完了
-            <p style={{ color: 'var(--muted)', marginTop: 4, fontSize: '0.75rem' }}>
-              {saveStatus.slice(3)}
-            </p>
-            <button
-              type="button"
-              className="primary-action complete-btn"
-              style={{ marginTop: 12, width: '100%' }}
-              onClick={onComplete}
-            >
-              <Check size={16} /> ホームへ
-            </button>
-          </div>
-        )}
-
-        {/* 完了ボタン: 保存前のみ表示 */}
-        {!saveStatus && (
-          <button
-            type="button"
-            className="primary-action complete-btn"
-            style={{ marginTop: 24 }}
-            onClick={handleComplete}
-          >
-            <Check size={18} /> 完了
-          </button>
-        )}
+        <button
+          type="button"
+          className="primary-action complete-btn"
+          style={{ marginTop: 24 }}
+          onClick={handleComplete}
+        >
+          <Check size={18} /> 完了
+        </button>
       </section>
     </div>
   );
@@ -372,10 +299,8 @@ export default function WeeklyTest({ user, weekDate, test1Questions, test2Questi
         </section>
         <div style={{ padding: '40px 24px', textAlign: 'center', color: 'var(--muted)' }}>
           <p style={{ fontSize: '1.5rem', marginBottom: 8 }}>📝</p>
-          <p style={{ fontWeight: 600, marginBottom: 4 }}>
-            {weekDate ? `${weekLabel(weekDate)}週のテスト問題がありません` : '準備中です'}
-          </p>
-          <p style={{ fontSize: '0.9rem' }}>今週のテスト問題は準備中です。もう少しお待ちください。</p>
+          <p style={{ fontWeight: 600, marginBottom: 4 }}>準備中です</p>
+          <p style={{ fontSize: '0.9rem' }}>Coming soon — check back later!</p>
         </div>
       </div>
     );
