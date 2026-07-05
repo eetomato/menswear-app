@@ -186,8 +186,10 @@ function FinalResult({ test1Results, test2Results, weekDate, user, startedAt, sa
         p,
         new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms)),
       ]);
+      // attempted_date는 JST(日本時間, UTC+9) 기준 오늘 날짜로 기록
+      const jstToday = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
       try {
-        const { data: emp } = await withTimeout(
+        const { data: emp, error: empErr } = await withTimeout(
           supabase
             .from('employees')
             .select('id')
@@ -196,16 +198,19 @@ function FinalResult({ test1Results, test2Results, weekDate, user, startedAt, sa
           5000
         );
 
-        if (emp?.id) {
-          await withTimeout(
+        if (empErr) {
+          console.warn('[WeeklyTest] employee 조회 실패:', empErr.message);
+        } else if (!emp?.id) {
+          console.warn(`[WeeklyTest] employees 테이블에 "${user.name}" 없음 — results 미저장`);
+        } else {
+          const [resInsert, sesInsert] = await withTimeout(
             Promise.all([
               supabase.from('results').insert({
                 employee_id: emp.id,
                 question_type: 'weekly_test',
                 user_answer: `test1:${t1c}/${test1Results.length}, test2:${t2c}/${(test2Results || []).length}`,
-                expected_answer: weekDate || '',
                 is_correct: pct >= 80,
-                attempted_date: new Date().toISOString().slice(0, 10),
+                attempted_date: jstToday,
               }),
               supabase.from('sessions').insert({
                 employee_id: emp.id,
@@ -215,6 +220,9 @@ function FinalResult({ test1Results, test2Results, weekDate, user, startedAt, sa
             ]),
             5000
           );
+          // INSERT 에러를 조용히 넘기지 않고 명시적으로 로깅
+          if (resInsert?.error) console.warn('[WeeklyTest] results INSERT 실패:', resInsert.error.message);
+          if (sesInsert?.error) console.warn('[WeeklyTest] sessions INSERT 실패:', sesInsert.error.message);
         }
       } catch (e) {
         console.warn('[WeeklyTest] Supabase 저장 실패/타임아웃', e.message);
